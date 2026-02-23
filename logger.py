@@ -1,34 +1,71 @@
 import logging
-from logging import handlers
-from datetime import datetime
 import os
-from pathlib import Path
-from dotenv import load_dotenv
+from logging.handlers import TimedRotatingFileHandler
+from datetime import datetime
 
-load_dotenv()
+# ──────────────────────────────────────────────
+#  Path Configuration
+# ──────────────────────────────────────────────
+BASE_DIR = "/home/mini_trade/trading_bot"
+LOG_DIR  = os.path.join(BASE_DIR, "data", "logs")
 
-# 로깅 설정 부분
-LogFormatter = logging.Formatter('%(message)s')
-today_ymd=datetime.today().strftime("%Y%m%d")
+# Create log directory if it doesn't exist
+os.makedirs(LOG_DIR, exist_ok=True)
 
-# 로그 파일명 지정 (00시 기준으로 '파일명.날짜' 형식으로 백업됨)
-logFile="scalper"
-default_log_dir = Path(__file__).resolve().parent / "logs"
-logPath = os.getenv("LOG_PATH", default_log_dir)
+# ──────────────────────────────────────────────
+#  Log File: scalper.YYYYMMDD  (daily rotation)
+# ──────────────────────────────────────────────
+LOG_FILE_PREFIX = os.path.join(LOG_DIR, "scalper")
 
-if not os.path.exists(logPath):
-    os.makedirs(logPath)
+def get_logger(name: str = "trading_bot") -> logging.Logger:
+    """
+    Returns a logger that writes to a daily-rotated file:
+        /home/mini_trade/trading_bot/data/logs/scalper.YYYYMMDD
+    and also outputs to the console.
+    """
+    logger = logging.getLogger(name)
 
-logFile = "scalper"
-LOGPATH = os.path.join(logPath, logFile)
+    # Avoid adding duplicate handlers on re-import
+    if logger.handlers:
+        return logger
 
-LogHandler = handlers.TimedRotatingFileHandler(filename=LOGPATH, when='midnight', interval=1, encoding='utf-8')
-LogHandler.setFormatter(LogFormatter)
-LogHandler.suffix = "%Y%m%d"
+    logger.setLevel(logging.DEBUG)
 
-Logger = logging.getLogger()
-Logger.setLevel(logging.INFO)
-Logger.addHandler(LogHandler)
+    # ── File Handler (daily rotation at midnight) ──
+    file_handler = TimedRotatingFileHandler(
+        filename=LOG_FILE_PREFIX,   # base name: scalper
+        when="midnight",            # rotate at midnight
+        interval=1,                 # every 1 day
+        backupCount=30,             # keep last 30 days
+        encoding="utf-8",
+        utc=False
+    )
+    # Suffix produces: scalper.20240520
+    file_handler.suffix = "%Y%m%d"
+    file_handler.setLevel(logging.DEBUG)
+
+    # ── Console Handler ──
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # ── Formatter ──
+    formatter = logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
+
+
+# ──────────────────────────────────────────────
+#  Default logger instance
+# ──────────────────────────────────────────────
+logger = get_logger()
 
 def log(level, *args):
     now = datetime.now()
@@ -36,7 +73,7 @@ def log(level, *args):
 
     if level not in ("TR", "DG", "INFO"):   # 로그레벨 미지정시 에러
         logs = f"TR|{real_time}|Log Level Error|"
-        Logger.info(logs)
+        logger.info(logs)
         return 0
 
     logs = f"{level}|{real_time}"
@@ -48,7 +85,7 @@ def log(level, *args):
     except Exception as e:
         logs += f"ER({e})"
 
-    Logger.info(logs)   # log 파일에 출력
+    logger.info(logs)   # log 파일에 출력
     return 1
     
 def log_function_call(func):
