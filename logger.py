@@ -72,7 +72,7 @@ def log(level, *args):
     real_time = now.strftime('%Y-%m-%d %H:%M:%S')
 
     if level not in ("TR", "DG", "INFO"):   # 로그레벨 미지정시 에러
-        logs = f"TR|{real_time}|Log Level Error|"
+        logs = f"ERR|{real_time}|Log Level Error|"
         logger.info(logs)
         return 0
 
