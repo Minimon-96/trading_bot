@@ -13,6 +13,7 @@ main.py
 """
 
 import configparser
+import importlib.util
 import multiprocessing
 import time
 
@@ -20,9 +21,20 @@ from logger import setup_logger, log, log_function_call
 from upbit_api import *
 from trade_order import *
 from trade_calculator import *
-from state import load_state, save_state, clear_state
 from upbit_db import init_tables, get_initial_asset, set_initial_asset, insert_trade_history
 from mod_telegram import send_buy_alert, send_sell_alert, send_monitor_report, send_error_alert
+
+# ── config/state.py 절대 경로 import ────────────────────────
+_state_spec   = importlib.util.spec_from_file_location(
+    "state",
+    "/home/mini_trade/trading_bot/config/state.py"
+)
+_state_module = importlib.util.module_from_spec(_state_spec)
+_state_spec.loader.exec_module(_state_module)
+
+load_state  = _state_module.load_state
+save_state  = _state_module.save_state
+clear_state = _state_module.clear_state
 
 
 # ════════════════════════════════════════════════════════════════
@@ -275,9 +287,27 @@ def run(coin: str) -> None:
                             new_avg       = GET_BUY_AVG(coin)
                             sell_price    = round(new_avg * sell_profit_rate)
                             wallet_after  = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
-                            buy_amount_f  = float(res.get("executed_volume", 0))
-                            buy_total     = round(float(res.get("price", cur_price)) * buy_amount_f) if buy_amount_f else buy_amount
-                            fee           = float(res.get("paid_fee", 0))
+
+                            # ── 체결 완료 후 상세 정보 조회 ────────
+                            # 시장가 매수는 주문 직후 state='wait'이므로
+                            # uuid로 체결 완료(done)될 때까지 폴링
+                            order_uuid   = res.get("uuid", "")
+                            order_detail = GET_ORDER_DETAIL(order_uuid) if order_uuid else None
+
+                            if order_detail:
+                                buy_amount_f = float(order_detail.get("executed_volume", 0))
+                                fee          = float(order_detail.get("paid_fee", 0))
+                                buy_total    = round(float(order_detail.get("price", cur_price)) * buy_amount_f) if buy_amount_f else buy_amount
+                            else:
+                                # 폴링 실패 시 fallback
+                                buy_amount_f = float(res.get("executed_volume", 0))
+                                fee          = float(res.get("paid_fee", 0))
+                                buy_total    = buy_amount
+
+                            log("INFO", f"[{coin}] BUY FILLED",
+                                f"volume={buy_amount_f}",
+                                f"fee={fee}",
+                                f"total={buy_total}")
 
                             # ── DB 거래 이력 기록 ──────────────────
                             insert_trade_history(
@@ -326,13 +356,29 @@ def run(coin: str) -> None:
                     time.sleep(1)
 
                     if res != 0:
-                        sell_amount   = float(res.get("executed_volume", 0))
-                        sell_total    = round(float(res.get("price", cur_price)) * sell_amount) if sell_amount else 0
-                        fee           = float(res.get("paid_fee", 0))
-                        avg_buy       = GET_BUY_AVG(coin)
-                        wallet_after  = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
-                        profit        = round(sell_total - (avg_buy * sell_amount) - fee)
-                        profit_rate   = round((profit / (avg_buy * sell_amount)) * 100, 2) if avg_buy and sell_amount else 0.0
+                        # ── 체결 완료 후 상세 정보 조회 ────────────
+                        order_uuid   = res.get("uuid", "")
+                        order_detail = GET_ORDER_DETAIL(order_uuid) if order_uuid else None
+
+                        if order_detail:
+                            sell_amount = float(order_detail.get("executed_volume", 0))
+                            fee         = float(order_detail.get("paid_fee", 0))
+                            sell_total  = round(float(order_detail.get("price", cur_price)) * sell_amount) if sell_amount else 0
+                        else:
+                            sell_amount = float(res.get("executed_volume", 0))
+                            fee         = float(res.get("paid_fee", 0))
+                            sell_total  = 0
+
+                        avg_buy      = GET_BUY_AVG(coin)
+                        wallet_after = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
+                        profit       = round(sell_total - (avg_buy * sell_amount) - fee)
+                        profit_rate  = round((profit / (avg_buy * sell_amount)) * 100, 2) if avg_buy and sell_amount else 0.0
+
+                        log("INFO", f"[{coin}] SELL FILLED",
+                            f"volume={sell_amount}",
+                            f"fee={fee}",
+                            f"total={sell_total}",
+                            f"profit={profit}")
 
                         # ── DB 거래 이력 기록 ──────────────────────
                         insert_trade_history(

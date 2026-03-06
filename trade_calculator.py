@@ -2,11 +2,11 @@ def calculate_trade_unit(cash):
     if cash <= 600000:
         return 6000
     elif 600000 < cash <= 1000000:
-        return 6000#10000
+        return 10000
     elif 1000000 < cash <= 1500000:
-        return 6000#15000
+        return 15000
     elif 1500000 < cash <= 2000000:
-        return 6000#20000
+        return 20000
     elif 2000000 < cash <= 3000000:
         return 25000
     elif 3000000 < cash <= 4000000:
