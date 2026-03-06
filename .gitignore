@@ -4,7 +4,7 @@ __pycache__/
 logs/
 data/
 config/
-mod*
+test/
 *.txt
 *.sh
 nohup.out
