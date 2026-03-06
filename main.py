@@ -16,7 +16,7 @@ import configparser
 import multiprocessing
 import time
 
-from logger import log
+from logger import setup_logger, log, log_function_call
 from upbit_api import *
 from trade_order import *
 from trade_calculator import *
@@ -62,33 +62,39 @@ def run(coin: str) -> None:
         coin: 거래할 코인 티커 (예: "KRW-BTC")
     """
 
-    # ── ① 설정 로드 (config.ini) ───────────────────────────────
+    # ── ① 로거 초기화 (프로세스별 독립 로그 파일) ───────────────
+    # 반드시 run() 최상단에서 호출해야 합니다.
+    # 이 시점 이후의 모든 log() 호출은 코인별 파일에 기록됩니다.
+    # 예: data/logs/scalper_KRW_BTC.20240520
+    setup_logger(coin)
+
+    # ── ③ 설정 로드 (config.ini) ───────────────────────────────
     cfg = load_config(coin)
 
-    #start_money      = cfg.getint  ("start_money",      300000)
+    start_money      = cfg.getint  ("start_money",      300000)
     last_sell_order  = cfg.getint  ("last_sell_order",  10)
-    profitPer        = cfg.getfloat("profit_per",       1.12)
-    sell_profit_rate = cfg.getfloat("sell_profit_rate", 1.05)
+    profitPer        = cfg.getfloat("profit_per",       1.06)
+    sell_profit_rate = cfg.getfloat("sell_profit_rate", 1.03)
     days_short       = cfg.getint  ("days_short",       3)
     days_long        = cfg.getint  ("days_long",        20)
     buy_timer_limit  = cfg.getint  ("buy_timer_limit",  3)
     min_sell_amount  = cfg.getint  ("min_sell_amount",  6000)
 
-    # ── ② 초기 시장 데이터 조회 ────────────────────────────────
-    start_money = cur_cash  = GET_CASH(coin)
+    log("INFO", f"[{coin}] 설정 로드 완료",
+        f"start_money={start_money}", f"days_short={days_short}", f"days_long={days_long}")
+
+    # ── ④ 초기 시장 데이터 조회 ────────────────────────────────
+    cur_cash  = GET_CASH(coin)
     cur_price = GET_CUR_PRICE(coin)
     cur_coin  = GET_QUAN_COIN(coin)
     one_tick  = calculate_tick_unit(cur_price)
-    
-    log("INFO", f"[{coin}] 설정 로드 완료",
-        f"start_money={start_money}", f"days_short={days_short}", f"days_long={days_long}")
 
     if cur_cash < 1:
         log("DG", f"[{coin}] GET_CASH() Error", str(cur_cash))
         time.sleep(10)
         return
 
-    # ── ③ 상태 복구 (state.py TTL 검사) ───────────────────────
+    # ── ⑤ 상태 복구 (state.py TTL 검사) ───────────────────────
     #
     #  [복구 우선순위]
     #  saved buy_price > 0  → 이전 매수가 복구 (재시작 2시간 이내)
@@ -127,7 +133,7 @@ def run(coin: str) -> None:
 
     before_buy_price = buy_price    # -아직 미사용-
 
-    # ── ④ 거래 루프 ────────────────────────────────────────────
+    # ── ⑥ 거래 루프 ────────────────────────────────────────────
     chk_run = 1
     time.sleep(1)
 
@@ -290,7 +296,7 @@ def run(coin: str) -> None:
                 chk_run        = 2
                 chk_sell_order = 0
 
-        # ── ⑤ 상태 저장 (매 사이클 종료 시) ───────────────────
+        # ── ⑦ 상태 저장 (매 사이클 종료 시) ───────────────────
         save_state(coin, {
             "buy_price":      buy_price,
             "sell_price":     sell_price,
@@ -315,6 +321,9 @@ def run(coin: str) -> None:
 COINS = ["KRW-BTC", "KRW-ETH", "KRW-XRP"]
 
 if __name__ == '__main__':
+    # 메인 프로세스 자체 로그는 scalper_SYSTEM.YYYYMMDD 에 기록
+    setup_logger("SYSTEM")
+
     processes = []
 
     for coin in COINS:

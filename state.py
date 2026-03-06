@@ -9,9 +9,9 @@ TTL(Time-to-Live) 정책:
   - 파일 없음 / 손상 / 코인 불일치   → DEFAULT_STATE로 초기화
 
 파일 경로 규칙:
-  config/trade_state_KRW_BTC.json   (KRW-BTC)
-  config/trade_state_KRW_ETH.json   (KRW-ETH)
-  config/trade_state_KRW_XRP.json   (KRW-XRP)
+  data/trade_state_KRW_BTC.json   (KRW-BTC)
+  data/trade_state_KRW_ETH.json   (KRW-ETH)
+  data/trade_state_KRW_XRP.json   (KRW-XRP)
 """
 
 import json
@@ -21,7 +21,7 @@ from logger import log
 
 # ── 상수 ────────────────────────────────────────────────────
 TTL_SECONDS = 2 * 60 * 60      # 2시간 (초 단위)
-STATE_DIR   = "config"
+STATE_DIR   = "data"
 
 # ── 기본 상태값 ──────────────────────────────────────────────
 # 봇이 최초 시작하거나 TTL이 만료된 경우 이 값으로 초기화됩니다.
@@ -63,7 +63,7 @@ def save_state(ticker: str, state: dict) -> None:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        log("ER", f"[state] save_state failed. ({ticker}): {e}")
+        log("ER", f"[state] save_state 실패 ({ticker}): {e}")
 
 
 def load_state(ticker: str) -> dict:
@@ -80,7 +80,7 @@ def load_state(ticker: str) -> dict:
 
     # ① 파일 없음 → 최초 시작
     if not os.path.exists(path):
-        log("INFO", f"[state] file not found. Set the init ({ticker})")
+        log("INFO", f"[state] 상태 파일 없음 → 초기값으로 시작 ({ticker})")
         return DEFAULT_STATE.copy()
 
     try:
@@ -89,7 +89,7 @@ def load_state(ticker: str) -> dict:
 
         # ② 코인 불일치 → 잘못된 파일
         if payload.get("ticker") != ticker:
-            log("ER", f"[state] ticker not match. Set the init ({ticker})")
+            log("ER", f"[state] ticker 불일치 → 초기값으로 시작 ({ticker})")
             return DEFAULT_STATE.copy()
 
         # ③ TTL 검사
@@ -97,22 +97,24 @@ def load_state(ticker: str) -> dict:
         age_minutes = int(age_seconds // 60)
 
         if age_seconds > TTL_SECONDS:
-            log("INFO", f"[state] TTL expired ({age_minutes} minutes). Set the init ({ticker})")
+            log("INFO", f"[state] TTL 만료 ({age_minutes}분 경과) → 초기값으로 시작 ({ticker})")
             return DEFAULT_STATE.copy()
 
         # ④ 정상 복구
-        log("INFO", f"[state] load ({age_minutes} minutes before saved file) ({ticker})")
+        log("INFO", f"[state] 상태 복구 성공 ({age_minutes}분 전 저장) ({ticker})")
         recovered = DEFAULT_STATE.copy()
         recovered.update(payload.get("state", {}))  # 누락된 키는 DEFAULT로 보완
         return recovered
 
     except (json.JSONDecodeError, KeyError) as e:
-        log("ER", f"[state] check the file. Set the init ({ticker}): {e}")
+        log("ER", f"[state] 파일 손상 → 초기값으로 시작 ({ticker}): {e}")
         return DEFAULT_STATE.copy()
+
 
 def clear_state(ticker: str) -> None:
     """
     상태 파일 삭제. 봇이 정상 종료(chk_run == 2)될 때 호출합니다.
+
     Args:
         ticker: 코인 티커 (예: "KRW-BTC")
     """
@@ -120,6 +122,6 @@ def clear_state(ticker: str) -> None:
     if os.path.exists(path):
         try:
             os.remove(path)
-            log("INFO", f"[state] remove the file. ({ticker})")
+            log("INFO", f"[state] 상태 파일 삭제 완료 ({ticker})")
         except Exception as e:
-            log("ER", f"[state] remove failed. ({ticker}): {e}")
+            log("ER", f"[state] 상태 파일 삭제 실패 ({ticker}): {e}")

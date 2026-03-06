@@ -1,0 +1,29 @@
+2026-03-06 20:47:33 [INFO] SYSTEM - [main] Process UP: KRW-BTC (PID: 5833)
+2026-03-06 20:47:33 [INFO] SYSTEM - [main] Process UP: KRW-ETH (PID: 5834)
+2026-03-06 20:47:33 [INFO] SYSTEM - [main] Process UP: KRW-XRP (PID: 5835)
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-XRP] 설정 로드 완료  |  start_money=301030  |  days_short=3  |  days_long=20
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-ETH] 설정 로드 완료  |  start_money=301030  |  days_short=3  |  days_long=20
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-BTC] 설정 로드 완료  |  start_money=301030  |  days_short=3  |  days_long=20
+2026-03-06 20:47:34 [INFO] SYSTEM - [state] load (16 minutes before saved file) (KRW-ETH)
+2026-03-06 20:47:34 [INFO] SYSTEM - [state] load (16 minutes before saved file) (KRW-XRP)
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-ETH] 거래 상태 복구 완료  |  buy_price=3000164.0  |  sell_price=0.0
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-XRP] 거래 상태 복구 완료  |  buy_price=2053.0  |  sell_price=0.0
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-ETH] Cur Price: 3022000.0  |  One Tick: 10577  |  Buy Price: 3000164.0  |  Buy Amount: 6000
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-XRP] Cur Price: 2053.0  |  One Tick: 3  |  Buy Price: 2053.0  |  Buy Amount: 6000
+2026-03-06 20:47:34 [INFO] SYSTEM - [state] load (16 minutes before saved file) (KRW-BTC)
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-BTC] 거래 상태 복구 완료  |  buy_price=102742752.0  |  sell_price=0.0
+2026-03-06 20:47:34 [INFO] SYSTEM - [KRW-BTC] Cur Price: 103417000.0  |  One Tick: 361960  |  Buy Price: 102742752.0  |  Buy Amount: 6000
+2026-03-06 20:47:35 [INFO] SYSTEM - ticker_bithumb : BTC
+2026-03-06 20:47:35 [INFO] SYSTEM - ticker_bithumb : XRP
+2026-03-06 20:47:35 [INFO] SYSTEM - ticker_bithumb : ETH
+2026-03-06 20:47:46 [INFO] SYSTEM - ticker_bithumb : BTC
+2026-03-06 20:47:46 [INFO] SYSTEM - ticker_bithumb : ETH
+2026-03-06 20:47:46 [INFO] SYSTEM - ticker_bithumb : XRP
+2026-03-06 20:47:57 [INFO] SYSTEM - ticker_bithumb : BTC
+2026-03-06 20:47:57 [INFO] SYSTEM - ticker_bithumb : XRP
+2026-03-06 20:47:57 [INFO] SYSTEM - ticker_bithumb : ETH
+2026-03-06 20:47:57 [INFO] SYSTEM - [KRW-XRP] One Tick: 3  |  Cur Price: 2051.0
+2026-03-06 20:47:58 [INFO] SYSTEM - [KRW-XRP] Check Timer: 1
+2026-03-06 20:48:07 [INFO] SYSTEM - ticker_bithumb : BTC
+2026-03-06 20:48:07 [INFO] SYSTEM - ticker_bithumb : ETH
+2026-03-06 20:48:09 [INFO] SYSTEM - ticker_bithumb : XRP
