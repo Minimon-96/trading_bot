@@ -65,7 +65,7 @@ def run(coin: str) -> None:
     # ── ① 설정 로드 (config.ini) ───────────────────────────────
     cfg = load_config(coin)
 
-    start_money      = cfg.getint  ("start_money",      300000)
+    #start_money      = cfg.getint  ("start_money",      300000)
     last_sell_order  = cfg.getint  ("last_sell_order",  10)
     profitPer        = cfg.getfloat("profit_per",       1.12)
     sell_profit_rate = cfg.getfloat("sell_profit_rate", 1.05)
@@ -74,14 +74,14 @@ def run(coin: str) -> None:
     buy_timer_limit  = cfg.getint  ("buy_timer_limit",  3)
     min_sell_amount  = cfg.getint  ("min_sell_amount",  6000)
 
-    log("INFO", f"[{coin}] 설정 로드 완료",
-        f"start_money={start_money}", f"days_short={days_short}", f"days_long={days_long}")
-
     # ── ② 초기 시장 데이터 조회 ────────────────────────────────
-    cur_cash  = GET_CASH(coin)
+    start_money = cur_cash  = GET_CASH(coin)
     cur_price = GET_CUR_PRICE(coin)
     cur_coin  = GET_QUAN_COIN(coin)
     one_tick  = calculate_tick_unit(cur_price)
+    
+    log("INFO", f"[{coin}] 설정 로드 완료",
+        f"start_money={start_money}", f"days_short={days_short}", f"days_long={days_long}")
 
     if cur_cash < 1:
         log("DG", f"[{coin}] GET_CASH() Error", str(cur_cash))

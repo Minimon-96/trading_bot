@@ -29,7 +29,7 @@ def fetch_data(fetch_func, max_retries: int = 10):
         if res is not None:
             return res
         time.sleep(0.5)
-    log("ERR", f"fetch_data: {max_retries}회 재시도 후 데이터 수신 실패")
+    log("ER", f"fetch_data: {max_retries}회 재시도 후 데이터 수신 실패")
     return None
 
 @log_function_call
