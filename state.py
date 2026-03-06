@@ -9,9 +9,9 @@ TTL(Time-to-Live) 정책:
   - 파일 없음 / 손상 / 코인 불일치   → DEFAULT_STATE로 초기화
 
 파일 경로 규칙:
-  data/trade_state_KRW_BTC.json   (KRW-BTC)
-  data/trade_state_KRW_ETH.json   (KRW-ETH)
-  data/trade_state_KRW_XRP.json   (KRW-XRP)
+  config/trade_state_KRW_BTC.json   (KRW-BTC)
+  config/trade_state_KRW_ETH.json   (KRW-ETH)
+  config/trade_state_KRW_XRP.json   (KRW-XRP)
 """
 
 import json
@@ -20,17 +20,18 @@ import time
 from logger import log
 
 # ── 상수 ────────────────────────────────────────────────────
-TTL_SECONDS = 2 * 60 * 60      # 2시간 (초 단위)
-STATE_DIR   = "data"
+TTL_SECONDS = 1 #2 * 60 * 60      # 2시간 (초 단위)
+STATE_DIR   = "config"
 
 # ── 기본 상태값 ──────────────────────────────────────────────
 # 봇이 최초 시작하거나 TTL이 만료된 경우 이 값으로 초기화됩니다.
 DEFAULT_STATE = {
-    "buy_price":      0.0,   # 현재 매수 목표가
-    "sell_price":     0.0,   # 현재 매도 목표가
-    "rise_chk":       0,     # 상승 추세 감지 플래그 (0 or 1)
-    "chk_15m_timer":  0,     # 15분 내 매수 횟수 카운터
-    "chk_sell_order": 0,     # 지정가 매도 주문 대기 플래그 (0 or 1)
+    "buy_price":        0.0,   # 현재 매수 목표가
+    "sell_price":       0.0,   # 현재 매도 목표가
+    "rise_chk":         0,     # 상승 추세 감지 플래그 (0 or 1)
+    "chk_15m_timer":    0,     # 15분 내 매수 횟수 카운터
+    "chk_sell_order":   0,     # 지정가 매도 주문 대기 플래그 (0 or 1)
+    "timer_15m_start":  0.0,   # 15분 타이머 기준 시각 (Unix timestamp)
 }
 
 

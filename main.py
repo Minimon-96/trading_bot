@@ -73,8 +73,8 @@ def run(coin: str) -> None:
 
     start_money      = cfg.getint  ("start_money",      300000)
     last_sell_order  = cfg.getint  ("last_sell_order",  10)
-    profitPer        = cfg.getfloat("profit_per",       1.06)
-    sell_profit_rate = cfg.getfloat("sell_profit_rate", 1.03)
+    profitPer        = cfg.getfloat("profit_per",       1.12)
+    sell_profit_rate = cfg.getfloat("sell_profit_rate", 1.05)
     days_short       = cfg.getint  ("days_short",       3)
     days_long        = cfg.getint  ("days_long",        20)
     buy_timer_limit  = cfg.getint  ("buy_timer_limit",  3)
@@ -100,10 +100,13 @@ def run(coin: str) -> None:
     #  saved buy_price > 0  → 이전 매수가 복구 (재시작 2시간 이내)
     #  saved buy_price == 0 → 현재가 기준 새로 계산 (최초 시작 또는 TTL 만료)
     #
-    state         = load_state(coin)
-    rise_chk      = state["rise_chk"]
-    chk_15m_timer = state["chk_15m_timer"]
-    chk_sell_order= state["chk_sell_order"]
+    state          = load_state(coin)
+    rise_chk       = state["rise_chk"]
+    chk_15m_timer  = state["chk_15m_timer"]
+    chk_sell_order = state["chk_sell_order"]
+    # 재시작 후 복구 시 타이머 기준 시각도 함께 복구.
+    # 저장된 값이 0.0(최초 시작)이면 현재 시각으로 초기화.
+    timer_15m_start = state["timer_15m_start"] or time.time()
 
     if state["buy_price"] > 0:
         # 이전 상태 복구
@@ -135,6 +138,7 @@ def run(coin: str) -> None:
 
     # ── ⑥ 거래 루프 ────────────────────────────────────────────
     chk_run = 1
+    timer_15m_start = time.time()   # [FIX] 15분 타이머 기준 시각 (분 단위 % 방식 → time.time() 방식으로 변경)
     time.sleep(1)
 
     while chk_run == 1:
@@ -165,11 +169,16 @@ def run(coin: str) -> None:
         if cur_cash < min_cash:
             log("DG", f"[{coin}] Cash on hand is too low.")
 
-        # 15분 타이머 초기화 (매시 15분 단위)
+        # 15분 타이머 초기화
+        # [FIX] 기존: int(time.strftime("%M")) % 15 == 0
+        #   → 루프 주기(10초)와 분의 경계가 맞지 않아 초기화가 누락되거나
+        #     같은 분 안에서 중복 초기화될 수 있음
+        # 변경: 마지막 초기화 시각으로부터 900초(15분) 경과 여부로 판단
         if chk_15m_timer != 0:
-            if int(time.strftime("%M")) % 15 == 0:
+            if time.time() - timer_15m_start >= 900:
                 log("INFO", f"[{coin}] Check Timer reset")
-                chk_15m_timer = 0
+                chk_15m_timer   = 0
+                timer_15m_start = time.time()   # 기준 시각 갱신
 
         # ── 매수/매도 구간 ──────────────────────────────────────
         if cur_cash > min_cash:
@@ -298,11 +307,12 @@ def run(coin: str) -> None:
 
         # ── ⑦ 상태 저장 (매 사이클 종료 시) ───────────────────
         save_state(coin, {
-            "buy_price":      buy_price,
-            "sell_price":     sell_price,
-            "rise_chk":       rise_chk,
-            "chk_15m_timer":  chk_15m_timer,
-            "chk_sell_order": chk_sell_order,
+            "buy_price":        buy_price,
+            "sell_price":       sell_price,
+            "rise_chk":         rise_chk,
+            "chk_15m_timer":    chk_15m_timer,
+            "chk_sell_order":   chk_sell_order,
+            "timer_15m_start":  timer_15m_start,
         })
 
         time.sleep(10)
