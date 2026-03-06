@@ -21,6 +21,7 @@ from upbit_api import *
 from trade_order import *
 from trade_calculator import *
 from state import load_state, save_state, clear_state
+from upbit_db import init_asset_table, get_initial_asset, set_initial_asset
 
 
 # ════════════════════════════════════════════════════════════════
@@ -71,10 +72,10 @@ def run(coin: str) -> None:
     # ── ③ 설정 로드 (config.ini) ───────────────────────────────
     cfg = load_config(coin)
 
-    start_money      = cfg.getint  ("start_money",      300000)
+    start_money      = None              # DB에서 로드 (아래에서 설정)
     last_sell_order  = cfg.getint  ("last_sell_order",  10)
-    profitPer        = cfg.getfloat("profit_per",       1.12)
-    sell_profit_rate = cfg.getfloat("sell_profit_rate", 1.05)
+    profitPer        = cfg.getfloat("profit_per",       1.06)
+    sell_profit_rate = cfg.getfloat("sell_profit_rate", 1.03)
     days_short       = cfg.getint  ("days_short",       3)
     days_long        = cfg.getint  ("days_long",        20)
     buy_timer_limit  = cfg.getint  ("buy_timer_limit",  3)
@@ -94,7 +95,31 @@ def run(coin: str) -> None:
         time.sleep(10)
         return
 
-    # ── ⑤ 상태 복구 (state.py TTL 검사) ───────────────────────
+    # ── ⑤ 초기 기준 자산 로드 (DB) ────────────────────────────
+    #
+    #  [동작 방식]
+    #  DB에 ticker 레코드 있음 → initial_money를 start_money로 사용
+    #  DB에 ticker 레코드 없음 → 현재 지갑 총액을 start_money로 계산 후 DB에 INSERT
+    #
+    #  수동 리셋 방법:
+    #    from upbit_db import reset_initial_asset
+    #    reset_initial_asset("KRW-BTC")
+    #  → 다음 봇 시작 시 그 시점 잔고 기준으로 재설정됨
+    #
+    start_money = get_initial_asset(coin)
+
+    if start_money is None:
+        # 최초 실행 — 현재 지갑 총액을 기준 자산으로 DB에 기록
+        start_money = round(cur_cash + (cur_coin * cur_price))
+        inserted = set_initial_asset(coin, start_money)
+        if inserted:
+            log("INFO", f"[{coin}] 초기 기준 자산 DB 저장 완료: {start_money} KRW")
+        else:
+            log("ER", f"[{coin}] 초기 기준 자산 DB 저장 실패 — 로컬 값으로 계속 진행")
+    else:
+        log("INFO", f"[{coin}] 초기 기준 자산 DB 로드 완료: {start_money} KRW")
+
+    # ── ⑥ 상태 복구 (state.py TTL 검사) ───────────────────────
     #
     #  [복구 우선순위]
     #  saved buy_price > 0  → 이전 매수가 복구 (재시작 2시간 이내)
@@ -333,6 +358,9 @@ COINS = ["KRW-BTC", "KRW-ETH", "KRW-XRP"]
 if __name__ == '__main__':
     # 메인 프로세스 자체 로그는 scalper_SYSTEM.YYYYMMDD 에 기록
     setup_logger("SYSTEM")
+
+    # initial_asset 테이블이 없으면 자동 생성
+    init_asset_table()
 
     processes = []
 
