@@ -21,7 +21,8 @@ from upbit_api import *
 from trade_order import *
 from trade_calculator import *
 from state import load_state, save_state, clear_state
-from upbit_db import init_asset_table, get_initial_asset, set_initial_asset
+from upbit_db import init_tables, get_initial_asset, set_initial_asset, insert_trade_history
+from mod_telegram import send_buy_alert, send_sell_alert, send_monitor_report, send_error_alert
 
 
 # ════════════════════════════════════════════════════════════════
@@ -39,8 +40,8 @@ def load_config(ticker: str) -> configparser.SectionProxy:
     Returns:
         configparser.SectionProxy — cfg["key"] 또는 cfg.getint("key") 형태로 사용
     """
-    cfg = configparser.ConfigParser()
-    cfg.read("config.ini", encoding="utf-8")
+    cfg = configparser.RawConfigParser(inline_comment_prefixes=(";", "#"))
+    cfg.read("/home/mini_trade/trading_bot/config/config.ini", encoding="utf-8")
 
     if ticker not in cfg:
         log("ER", f"[config] config.ini에 [{ticker}] 섹션이 없습니다. DEFAULT값 사용.")
@@ -126,12 +127,10 @@ def run(coin: str) -> None:
     #  saved buy_price == 0 → 현재가 기준 새로 계산 (최초 시작 또는 TTL 만료)
     #
     state          = load_state(coin)
-    rise_chk       = state["rise_chk"]
     chk_15m_timer  = state["chk_15m_timer"]
     chk_sell_order = state["chk_sell_order"]
-    # 재시작 후 복구 시 타이머 기준 시각도 함께 복구.
-    # 저장된 값이 0.0(최초 시작)이면 현재 시각으로 초기화.
     timer_15m_start = state["timer_15m_start"] or time.time()
+    timer_3h_start  = state["timer_3h_start"]  or time.time()
 
     if state["buy_price"] > 0:
         # 이전 상태 복구
@@ -161,9 +160,10 @@ def run(coin: str) -> None:
 
     before_buy_price = buy_price    # -아직 미사용-
 
-    # ── ⑥ 거래 루프 ────────────────────────────────────────────
-    chk_run = 1
-    timer_15m_start = time.time()   # [FIX] 15분 타이머 기준 시각 (분 단위 % 방식 → time.time() 방식으로 변경)
+    # ── ⑦ 거래 루프 ────────────────────────────────────────────
+    chk_run         = 1
+    timer_15m_start = time.time()
+    timer_3h_start  = time.time()   # 3시간 모니터링 리포트 타이머
     time.sleep(1)
 
     while chk_run == 1:
@@ -195,15 +195,36 @@ def run(coin: str) -> None:
             log("DG", f"[{coin}] Cash on hand is too low.")
 
         # 15분 타이머 초기화
-        # [FIX] 기존: int(time.strftime("%M")) % 15 == 0
-        #   → 루프 주기(10초)와 분의 경계가 맞지 않아 초기화가 누락되거나
-        #     같은 분 안에서 중복 초기화될 수 있음
-        # 변경: 마지막 초기화 시각으로부터 900초(15분) 경과 여부로 판단
         if chk_15m_timer != 0:
             if time.time() - timer_15m_start >= 900:
                 log("INFO", f"[{coin}] Check Timer reset")
                 chk_15m_timer   = 0
-                timer_15m_start = time.time()   # 기준 시각 갱신
+                timer_15m_start = time.time()
+
+        # 3시간 모니터링 리포트 전송
+        if time.time() - timer_3h_start >= 10800:
+            try:
+                _wallet  = round(cur_cash + (cur_coin * cur_price))
+                _profit  = _wallet - start_money
+                _prate   = round((_profit / start_money) * 100, 2) if start_money else 0
+                _trend   = GET_MARKET_TREND(coin, cur_price, days_short, days_long)
+                send_monitor_report([{
+                    "ticker":      coin,
+                    "cur_price":   cur_price,
+                    "buy_price":   buy_price,
+                    "sell_price":  sell_price,
+                    "cur_coin":    cur_coin,
+                    "cur_cash":    cur_cash,
+                    "trend":       _trend,
+                    "wallet":      _wallet,
+                    "profit":      _profit,
+                    "profit_rate": _prate,
+                }])
+                log("INFO", f"[{coin}] 3시간 모니터링 리포트 전송 완료")
+            except Exception as e:
+                log("ER", f"[{coin}] 모니터링 리포트 전송 실패: {e}")
+            finally:
+                timer_3h_start = time.time()    # 성공/실패 무관하게 타이머 갱신
 
         # ── 매수/매도 구간 ──────────────────────────────────────
         if cur_cash > min_cash:
@@ -213,23 +234,32 @@ def run(coin: str) -> None:
                     f"ACCOUNT: {round(cur_cash)}",
                     f"COIN_{coin}: {cur_coin}")
 
-                # 추세 판단
+                # ── 추세 판단 및 buy_price 재설정 ─────────────
+                # trend == "up" / "run-up" : 가격이 올랐으므로
+                #   buy_price를 현재가 기준으로 다시 내려 설정 후 대기
+                # trend == "down"          : buy_price 유지,
+                #   cur_price < buy_price 이면 매수 진행
                 trend = GET_MARKET_TREND(coin, cur_price, days_short, days_long)
-                if trend in ("up", "run-up"):
-                    log("DG", f"[{coin}] Trend={trend}. Resetting buy price.")
-                    rise_chk = 1
+                log("DG", f"[{coin}] Trend={trend}")
 
-                if rise_chk == 1:
+                if trend in ("up", "run-up"):
+                    # [FIX] rise_chk 플래그 제거 — 조건 충족 시 즉시 재설정
                     buy_price = cur_price - (one_tick * 3)
-                    log("INFO", f"[{coin}] One Tick: {one_tick}",
-                        f"Cur Price: {cur_price}", f"Buy Price: {buy_price}")
-                    rise_chk = 0
+                    log("INFO", f"[{coin}] Trend={trend} → buy_price reset",
+                        f"One Tick: {one_tick}",
+                        f"Cur Price: {cur_price}",
+                        f"New Buy Price: {buy_price}")
 
                 log("DG", f"[{coin}] CUR_PRICE: {cur_price}", f"BUY_PRICE: {buy_price}")
 
-                # 시장가 매수
-                if cur_price < buy_price:
-                    log("INFO", f"[{coin}] One Tick: {one_tick}", f"Cur Price: {cur_price}")
+                # ── 시장가 매수 ────────────────────────────────
+                # 조건: trend == "down" 이고 cur_price < buy_price
+                # [FIX] 매수 실행 후 did_buy 플래그를 세워
+                #       같은 사이클에 매도가 연속 실행되는 것을 방지
+                did_buy = False
+                if trend == "down" and cur_price < buy_price:
+                    log("INFO", f"[{coin}] Buy condition met.",
+                        f"One Tick: {one_tick}", f"Cur Price: {cur_price}")
                     if chk_15m_timer > buy_timer_limit:
                         buy_price = cur_price - (one_tick * 3)
                         log("DG", f"[{coin}] Purchased more than {buy_timer_limit} times in 15 minutes.")
@@ -238,22 +268,100 @@ def run(coin: str) -> None:
                         time.sleep(1)
 
                         if res != 0:
+                            did_buy       = True
                             chk_15m_timer += 1
                             log("INFO", f"[{coin}] Check Timer: {chk_15m_timer}")
-                            buy_price  = cur_price - (one_tick * 3)
-                            sell_price = round(GET_BUY_AVG(coin) * sell_profit_rate)
+                            buy_price     = cur_price - (one_tick * 3)
+                            new_avg       = GET_BUY_AVG(coin)
+                            sell_price    = round(new_avg * sell_profit_rate)
+                            wallet_after  = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
+                            buy_amount_f  = float(res.get("executed_volume", 0))
+                            buy_total     = round(float(res.get("price", cur_price)) * buy_amount_f) if buy_amount_f else buy_amount
+                            fee           = float(res.get("paid_fee", 0))
+
+                            # ── DB 거래 이력 기록 ──────────────────
+                            insert_trade_history(
+                                ticker        = coin,
+                                side          = "BUY",
+                                price         = cur_price,
+                                amount        = buy_amount_f,
+                                total         = buy_total,
+                                fee           = fee,
+                                avg_buy_price = round(new_avg),
+                                profit        = 0,
+                                profit_rate   = 0.0,
+                                wallet_before = wallet,
+                                wallet_after  = wallet_after,
+                            )
+
+                            # ── 텔레그램 매수 알림 ─────────────────
+                            send_buy_alert(
+                                ticker        = coin,
+                                price         = cur_price,
+                                amount        = buy_amount_f,
+                                total         = buy_total,
+                                avg_buy_price = round(new_avg),
+                                wallet_before = wallet,
+                                wallet_after  = wallet_after,
+                            )
+
                             log("DG", f"[{coin}] BUY ORDER: {cur_price}",
                                 f"AMOUNT: {buy_amount}")
 
                 log("DG", f"[{coin}] CUR_PRICE: {cur_price}", f"SELL_PRICE: {sell_price}")
 
-                # 시장가 매도
-                if cur_price >= sell_price and (cur_coin * cur_price) > min_sell_amount:
+                # ── 시장가 매도 ────────────────────────────────
+                # 조건:
+                #   1. sell_price > 0 (매도가 설정된 상태)         [FIX] sell_price==0 방지
+                #   2. cur_price >= sell_price
+                #   3. 보유 코인 평가금액 > min_sell_amount
+                #   4. 이번 사이클에 매수가 실행되지 않았을 것       [FIX] 연속 매수+매도 방지
+                if (
+                    not did_buy
+                    and sell_price > 0
+                    and cur_price >= sell_price
+                    and (cur_coin * cur_price) > min_sell_amount
+                ):
                     res = ORDER_SELL_MARKET(coin)
                     time.sleep(1)
 
                     if res != 0:
-                        sell_amount = res['executed_volume']
+                        sell_amount   = float(res.get("executed_volume", 0))
+                        sell_total    = round(float(res.get("price", cur_price)) * sell_amount) if sell_amount else 0
+                        fee           = float(res.get("paid_fee", 0))
+                        avg_buy       = GET_BUY_AVG(coin)
+                        wallet_after  = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
+                        profit        = round(sell_total - (avg_buy * sell_amount) - fee)
+                        profit_rate   = round((profit / (avg_buy * sell_amount)) * 100, 2) if avg_buy and sell_amount else 0.0
+
+                        # ── DB 거래 이력 기록 ──────────────────────
+                        insert_trade_history(
+                            ticker        = coin,
+                            side          = "SELL",
+                            price         = cur_price,
+                            amount        = sell_amount,
+                            total         = sell_total,
+                            fee           = fee,
+                            avg_buy_price = round(avg_buy),
+                            profit        = profit,
+                            profit_rate   = profit_rate,
+                            wallet_before = wallet,
+                            wallet_after  = wallet_after,
+                        )
+
+                        # ── 텔레그램 매도 알림 ─────────────────────
+                        send_sell_alert(
+                            ticker        = coin,
+                            price         = cur_price,
+                            amount        = sell_amount,
+                            total         = sell_total,
+                            avg_buy_price = round(avg_buy),
+                            profit        = profit,
+                            profit_rate   = profit_rate,
+                            wallet_before = wallet,
+                            wallet_after  = wallet_after,
+                        )
+
                         log("DG", f"[{coin}] SELL ORDER: {sell_price}",
                             f"AMOUNT: {sell_amount}")
                         sell_price = 0.0
@@ -334,10 +442,10 @@ def run(coin: str) -> None:
         save_state(coin, {
             "buy_price":        buy_price,
             "sell_price":       sell_price,
-            "rise_chk":         rise_chk,
             "chk_15m_timer":    chk_15m_timer,
             "chk_sell_order":   chk_sell_order,
             "timer_15m_start":  timer_15m_start,
+            "timer_3h_start":   timer_3h_start,
         })
 
         time.sleep(10)
@@ -359,8 +467,8 @@ if __name__ == '__main__':
     # 메인 프로세스 자체 로그는 scalper_SYSTEM.YYYYMMDD 에 기록
     setup_logger("SYSTEM")
 
-    # initial_asset 테이블이 없으면 자동 생성
-    init_asset_table()
+    # initial_asset, trade_history 테이블 없으면 자동 생성
+    init_tables()
 
     processes = []
 

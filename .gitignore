@@ -5,3 +5,6 @@ logs/
 data/
 config/
 mod*
+*.txt
+*.sh
+nohup.out

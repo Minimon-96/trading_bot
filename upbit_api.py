@@ -13,7 +13,7 @@ secret_key = os.getenv("UPBIT_SECRET_KEY")
 
 # 키가 없는 경우 에러 처리
 if not access_key or not secret_key:
-    print("Error: .env 파일에 API KEY가 없습니다.")
+    log("ER","Error: .env 파일에 API KEY가 없습니다.")
     
 # 업비트 연동
 upbit = pyupbit.Upbit(access_key, secret_key) 
@@ -87,7 +87,7 @@ def GET_MARKET_TREND(ticker, price, days_short, days_long):
         df = fetch_data(lambda: pybithumb.get_ohlcv(ticker_bithumb))    # pybithumb 라이브러리를 사용하여 암호화폐의 OHLCV 데이터 수신
         
         if df is None or df.empty:
-            log("DG","OHLCV DataFrame Get Failed.")
+            log("ER","OHLCV DataFrame Get Failed.")
             return 0
 
         ma_short = df['close'].rolling(window=days_short).mean()    # 일정 기간(days_short) 동안의 종가 평균값(ma)을 계산
