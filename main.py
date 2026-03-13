@@ -148,8 +148,16 @@ def run(coin: str) -> None:
         # 이전 상태 복구
         buy_price  = state["buy_price"]
         sell_price = state["sell_price"]
-        log("INFO", f"[{coin}] 거래 상태 복구 완료",
-            f"buy_price={buy_price}", f"sell_price={sell_price}")
+
+        # [FIX] sell_price가 0인데 보유 코인이 있으면 재계산
+        # state에 sell_price=0이 저장된 채 재시작되면 매도 기회를 영원히 놓침
+        if sell_price == 0.0 and cur_coin * cur_price >= min_sell_amount:
+            sell_price = round(GET_BUY_AVG(coin) * sell_profit_rate)
+            log("INFO", f"[{coin}] 거래 상태 복구 완료 (sell_price 재계산)",
+                f"buy_price={buy_price}", f"sell_price={sell_price}")
+        else:
+            log("INFO", f"[{coin}] 거래 상태 복구 완료",
+                f"buy_price={buy_price}", f"sell_price={sell_price}")
     else:
         # 초기값 계산
         buy_price = cur_price - (one_tick * 3)
@@ -197,7 +205,7 @@ def run(coin: str) -> None:
         one_tick = calculate_tick_unit(cur_price)
         cur_coin = GET_QUAN_COIN(coin)
 
-        if cur_coin * cur_price <= one_tick:
+        if cur_coin * cur_price <= min_sell_amount:
             sell_price = 0.0
 
         # 보유 현금이 최솟값 미만이면 매수 중지
@@ -280,63 +288,59 @@ def run(coin: str) -> None:
                         time.sleep(1)
 
                         if res != 0:
-                            did_buy       = True
-                            chk_15m_timer += 1
-                            log("INFO", f"[{coin}] Check Timer: {chk_15m_timer}")
-                            buy_price     = cur_price - (one_tick * 3)
-                            new_avg       = GET_BUY_AVG(coin)
-                            sell_price    = round(new_avg * sell_profit_rate)
-                            wallet_after  = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
-
                             # ── 체결 완료 후 상세 정보 조회 ────────
-                            # 시장가 매수는 주문 직후 state='wait'이므로
-                            # uuid로 체결 완료(done)될 때까지 폴링
                             order_uuid   = res.get("uuid", "")
                             order_detail = GET_ORDER_DETAIL(order_uuid) if order_uuid else None
 
-                            if order_detail:
+                            if order_detail is None:
+                                # 주문 취소(cancel) 또는 타임아웃 → 체결 안 됨
+                                log("INFO", f"[{coin}] BUY ORDER cancelled or timeout — sell_price 갱신 skip")
+                            else:
+                                did_buy       = True
+                                chk_15m_timer += 1
+                                log("INFO", f"[{coin}] Check Timer: {chk_15m_timer}")
+                                buy_price     = cur_price - (one_tick * 3)
+                                new_avg       = GET_BUY_AVG(coin)
+                                sell_price    = round(new_avg * sell_profit_rate)
+                                wallet_after  = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
+
                                 buy_amount_f = float(order_detail.get("executed_volume", 0))
                                 fee          = float(order_detail.get("paid_fee", 0))
                                 buy_total    = round(float(order_detail.get("price", cur_price)) * buy_amount_f) if buy_amount_f else buy_amount
-                            else:
-                                # 폴링 실패 시 fallback
-                                buy_amount_f = float(res.get("executed_volume", 0))
-                                fee          = float(res.get("paid_fee", 0))
-                                buy_total    = buy_amount
 
-                            log("INFO", f"[{coin}] BUY FILLED",
-                                f"volume={buy_amount_f}",
-                                f"fee={fee}",
-                                f"total={buy_total}")
+                                log("INFO", f"[{coin}] BUY FILLED",
+                                    f"volume={buy_amount_f}",
+                                    f"fee={fee}",
+                                    f"total={buy_total}")
 
-                            # ── DB 거래 이력 기록 ──────────────────
-                            insert_trade_history(
-                                ticker        = coin,
-                                side          = "BUY",
-                                price         = cur_price,
-                                amount        = buy_amount_f,
-                                total         = buy_total,
-                                fee           = fee,
-                                avg_buy_price = round(new_avg),
-                                profit        = 0,
-                                profit_rate   = 0.0,
-                                wallet_before = wallet,
-                                wallet_after  = wallet_after,
-                            )
+                                # ── DB 거래 이력 기록 ──────────────────
+                                insert_trade_history(
+                                    ticker        = coin,
+                                    side          = "BUY",
+                                    price         = cur_price,
+                                    amount        = buy_amount_f,
+                                    total         = buy_total,
+                                    fee           = fee,
+                                    avg_buy_price = round(new_avg),
+                                    profit        = 0,
+                                    profit_rate   = 0.0,
+                                    wallet_before = wallet,
+                                    wallet_after  = wallet_after,
+                                )
 
-                            # ── 텔레그램 매수 알림 ─────────────────
-                            send_buy_alert(
-                                ticker        = coin,
-                                price         = cur_price,
-                                amount        = buy_amount_f,
-                                total         = buy_total,
-                                avg_buy_price = round(new_avg),
-                                wallet_before = wallet,
-                                wallet_after  = wallet_after,
-                            )
+                                # ── 텔레그램 매수 알림 ─────────────────
+                                send_buy_alert(
+                                    ticker        = coin,
+                                    price         = cur_price,
+                                    amount        = buy_amount_f,
+                                    total         = buy_total,
+                                    avg_buy_price = round(new_avg),
+                                    wallet_before = wallet,
+                                    wallet_after  = wallet_after,
+                                )
 
-                            log("DG", f"[{coin}] BUY ORDER: {cur_price}",
-                                f"AMOUNT: {buy_amount}")
+                                log("DG", f"[{coin}] BUY ORDER: {cur_price}",
+                                    f"AMOUNT: {buy_amount}")
 
                 log("DG", f"[{coin}] CUR_PRICE: {cur_price}", f"SELL_PRICE: {sell_price}")
 

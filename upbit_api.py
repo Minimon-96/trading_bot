@@ -197,23 +197,24 @@ def GET_ORDER_STATE(uuid):  # 주문 상태 리턴 (오류:error / 대기:wait /
 def GET_ORDER_DETAIL(uuid: str):
     """
     uuid로 주문 상세 정보를 조회합니다.
-    시장가 매수는 주문 직후 state='wait'으로 응답되므로,
-    체결 완료(state='done')까지 폴링 후 executed_volume, paid_fee를 반환합니다.
-
-    Returns:
-        dict — 체결 완료된 주문 상세
-        None — 조회 실패 또는 타임아웃
+    state가 done → 체결 완료 dict 반환
+    state가 cancel → None 반환 (체결 실패)
+    그 외 → 0.5초마다 최대 10회 폴링
     """
-    for _ in range(10):     # 최대 10회 (약 5초) 폴링
+    for _ in range(10):
         try:
             res = upbit.get_order(uuid)
             if res and isinstance(res, dict):
-                if res.get("state") == "done":
+                state = res.get("state")
+                if state == "done":
                     log("TR", "Success", f"uuid={uuid}",
                         f"executed_volume={res.get('executed_volume')}",
                         f"paid_fee={res.get('paid_fee')}")
                     return res
-                log("TR", f"Waiting for fill... state={res.get('state')}")
+                elif state == "cancel":
+                    log("TR", f"Order cancelled: uuid={uuid}")
+                    return None
+                log("TR", f"Waiting for fill... state={state}")
         except Exception as e:
             log("TR", "Fail", e)
         time.sleep(0.5)
