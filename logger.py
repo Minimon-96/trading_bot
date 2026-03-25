@@ -154,6 +154,6 @@ def log_function_call(func):
         logger = _get_logger()
         logger.debug(f"[CALL] {func.__name__}() called  args={args[:2]}")
         result = func(*args, **kwargs)
-        logger.debug(f"[CALL] {func.__name__}() returned  result={str(result)[:80]}")
+        logger.debug(f"[CALL] {func.__name__}() returned  result={str(result)[:500]}")
         return result
     return wrapper
