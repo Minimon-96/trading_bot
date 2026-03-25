@@ -1,20 +1,26 @@
+# def calculate_trade_unit(cash):
+#     if cash <= 600000:
+#         return 6000
+#     elif 600000 < cash <= 1000000:
+#         return 10000
+#     elif 1000000 < cash <= 1500000:
+#         return 15000
+#     elif 1500000 < cash <= 2000000:
+#         return 20000
+#     elif 2000000 < cash <= 3000000:
+#         return 25000
+#     elif 3000000 < cash <= 4000000:
+#         return 35000
+#     elif 4000000 < cash <= 8000000:
+#         return 50000
+#     elif 8000000 < cash:
+#         return 100000
+#     else:
+#         return 0
+
 def calculate_trade_unit(cash):
-    if cash <= 600000:
+    if cash > 10000:
         return 6000
-    elif 600000 < cash <= 1000000:
-        return 10000
-    elif 1000000 < cash <= 1500000:
-        return 15000
-    elif 1500000 < cash <= 2000000:
-        return 20000
-    elif 2000000 < cash <= 3000000:
-        return 25000
-    elif 3000000 < cash <= 4000000:
-        return 35000
-    elif 4000000 < cash <= 8000000:
-        return 50000
-    elif 8000000 < cash:
-        return 100000
     else:
         return 0
 

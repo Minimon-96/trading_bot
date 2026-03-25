@@ -197,11 +197,26 @@ def GET_ORDER_STATE(uuid):  # 주문 상태 리턴 (오류:error / 대기:wait /
 def GET_ORDER_DETAIL(uuid: str):
     """
     uuid로 주문 상세 정보를 조회합니다.
-    state가 done → 체결 완료 dict 반환
-    state가 cancel → None 반환 (체결 실패)
-    그 외 → 0.5초마다 최대 10회 폴링
+    state가 done   → 체결 완료 dict 반환
+    state가 cancel → 재폴링 후 done 확인, 최종 cancel이면 None 반환
+    그 외           → 0.5초마다 최대 10회 폴링
+
+    [FIX] 기존 cancel 즉시 None 반환 문제 수정
+      Upbit 시장가 주문은 내부 처리 과정에서
+      cancel 상태를 거친 뒤 done으로 전환되는 경우가 있음.
+      (주문 수량 분할 처리 등 내부 메커니즘)
+      cancel을 조회한 즉시 None을 반환하면 실제로 체결된 주문을
+      미체결로 오판하게 됨.
+
+      수정:
+        cancel 상태를 처음 만나면 즉시 포기하지 않고,
+        최대 cancel_retry_limit(3회)만큼 추가 재폴링하여
+        done으로 전환되는지 확인한 후 최종 판단.
     """
-    for _ in range(10):
+    cancel_retry_count = 0
+    cancel_retry_limit = 3  # cancel 상태에서 추가로 재시도할 최대 횟수
+
+    for attempt in range(10):
         try:
             res = upbit.get_order(uuid)
             if res and isinstance(res, dict):
@@ -212,9 +227,15 @@ def GET_ORDER_DETAIL(uuid: str):
                         f"paid_fee={res.get('paid_fee')}")
                     return res
                 elif state == "cancel":
-                    log("TR", f"Order cancelled: uuid={uuid}")
-                    return None
-                log("TR", f"Waiting for fill... state={state}")
+                    cancel_retry_count += 1
+                    log("TR", f"Order cancel state detected (retry {cancel_retry_count}/{cancel_retry_limit}): uuid={uuid}")
+                    if cancel_retry_count >= cancel_retry_limit:
+                        # 재폴링 후에도 cancel이면 진짜 미체결로 확정
+                        log("TR", f"Order confirmed cancelled after {cancel_retry_limit} retries: uuid={uuid}")
+                        return None
+                    # cancel_retry_limit 미만이면 재폴링 계속
+                else:
+                    log("TR", f"Waiting for fill... state={state} (attempt {attempt+1})")
         except Exception as e:
             log("TR", "Fail", e)
         time.sleep(0.5)

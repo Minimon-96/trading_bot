@@ -181,9 +181,20 @@ def run(coin: str) -> None:
     before_buy_price = buy_price    # -아직 미사용-
 
     # ── ⑦ 거래 루프 ────────────────────────────────────────────
-    chk_run         = 1
-    timer_15m_start = time.time()
-    timer_3h_start  = time.time()   # 3시간 모니터링 리포트 타이머
+    chk_run        = 1
+    timer_3h_start = time.time()   # 3시간 모니터링 리포트 타이머
+    # [FIX] timer_15m_start는 여기서 초기화하지 않음.
+    #   기존 코드: timer_15m_start = time.time() ← 루프 시작 시 무조건 현재 시각으로 덮어씀
+    #   문제:
+    #     chk_15m_timer가 1이 되는 시점에 timer_15m_start는 이미 루프 가동 시각 기준이므로
+    #     경과 시간(time.time() - timer_15m_start)이 이미 900초를 초과한 상태일 수 있음.
+    #     → 매수 직후 다음 사이클에서 즉시 chk_15m_timer = 0 리셋 발생
+    #     → 15분 내 매수 횟수 제한이 전혀 동작하지 않음.
+    #
+    #   수정:
+    #     timer_15m_start는 실제 매수가 발생한 시점(chk_15m_timer가 1→2 등으로 증가하는 시점)에만 갱신.
+    #     초기값은 state 복구값(또는 None)을 그대로 사용하고,
+    #     chk_15m_timer == 0 상태에서는 타이머 체크 자체를 하지 않으므로 초기값은 무관함.
     time.sleep(1)
 
     while chk_run == 1:
@@ -293,10 +304,69 @@ def run(coin: str) -> None:
                             order_detail = GET_ORDER_DETAIL(order_uuid) if order_uuid else None
 
                             if order_detail is None:
-                                # 주문 취소(cancel) 또는 타임아웃 → 체결 안 됨
-                                log("INFO", f"[{coin}] BUY ORDER cancelled or timeout — sell_price 갱신 skip")
+                                # ── [FIX] order_detail None이어도 실제 체결 여부를 코인 수량으로 2차 검증 ──
+                                #
+                                #  GET_ORDER_DETAIL이 cancel 상태를 잡았더라도
+                                #  실제로는 체결이 완료된 경우(보유 수량 증가)가 존재함.
+                                #  이 경우 buy_price / sell_price 미갱신으로 인해:
+                                #    1. sell_price = 0 유지 → 매도 기회 영구 손실
+                                #    2. buy_price 미갱신   → 다음 사이클에서 즉시 재매수 발생
+                                #    3. send_buy_alert 미호출 → 텔레그램 매수 알림 누락  ← 이번 버그
+                                coin_qty_after = GET_QUAN_COIN(coin)
+                                if coin_qty_after * cur_price >= min_sell_amount:
+                                    # 코인 수량이 있으면 실제 체결로 간주
+                                    did_buy      = True
+                                    buy_price    = cur_price - (one_tick * 3)
+                                    new_avg      = GET_BUY_AVG(coin)
+                                    sell_price   = round(new_avg * sell_profit_rate)
+                                    wallet_after = round(GET_CASH(coin) + (coin_qty_after * cur_price))
+                                    # order_detail 없으므로 체결 수량은 잔고 증분으로 근사,
+                                    # 수수료는 buy_amount 기준 0.05%로 추정
+                                    buy_amount_f = coin_qty_after
+                                    fee          = round(buy_amount * 0.0005, 8)
+                                    buy_total    = buy_amount
+
+                                    log("INFO", f"[{coin}] BUY ORDER confirmed via coin balance",
+                                        f"buy_price={buy_price}", f"sell_price={sell_price}")
+
+                                    # ── DB 거래 이력 기록 ──────────────────
+                                    insert_trade_history(
+                                        ticker        = coin,
+                                        side          = "BUY",
+                                        price         = cur_price,
+                                        amount        = buy_amount_f,
+                                        total         = buy_total,
+                                        fee           = fee,
+                                        avg_buy_price = round(new_avg),
+                                        profit        = 0,
+                                        profit_rate   = 0.0,
+                                        wallet_before = wallet,
+                                        wallet_after  = wallet_after,
+                                    )
+
+                                    # ── 텔레그램 매수 알림 ─────────────────
+                                    send_buy_alert(
+                                        ticker        = coin,
+                                        price         = cur_price,
+                                        amount        = buy_amount_f,
+                                        total         = buy_total,
+                                        avg_buy_price = round(new_avg),
+                                        wallet_before = wallet,
+                                        wallet_after  = wallet_after,
+                                    )
+                                else:
+                                    # 코인 수량도 없으면 진짜 미체결
+                                    log("INFO", f"[{coin}] BUY ORDER cancelled or timeout — sell_price 갱신 skip")
                             else:
                                 did_buy       = True
+                                # [FIX] chk_15m_timer가 0→1이 되는 시점(첫 매수)에 타이머를 시작.
+                                #   기존: timer_15m_start를 루프 진입 시 time.time()으로 초기화 →
+                                #         매수 시점에 이미 경과 시간이 900초를 넘어 즉시 리셋되는 버그.
+                                #   수정: 첫 매수(0→1)가 발생한 바로 이 시점에 timer_15m_start 갱신.
+                                #         이후 매수(2, 3...)는 이 기준으로 15분을 정확히 카운트.
+                                if chk_15m_timer == 0:
+                                    timer_15m_start = time.time()
+                                    log("INFO", f"[{coin}] 15분 타이머 시작 (첫 매수 기준)")
                                 chk_15m_timer += 1
                                 log("INFO", f"[{coin}] Check Timer: {chk_15m_timer}")
                                 buy_price     = cur_price - (one_tick * 3)
