@@ -8,6 +8,8 @@ trade_calculator.py
   - 1회 기준금  = 코인당예산 / 등비수열합계(40항)
   - 회차 매수금 = 기준금 × RATIO^buy_count
   - RATIO       = MAX_MULTIPLE^(1/(MAX_BUY-1)) ≈ 1.0416  (5배/39스텝)
+  - 계산값이 MIN_ORDER 미달 시 MIN_ORDER(6,000원)로 하한 고정
+  - 하한 고정 후에도 코인당 예산 초과 시 0 반환 (매수 불가)
   - 40회 도달 시 main.py에서 지정가 매도로 전환
 """
 
@@ -39,32 +41,38 @@ def calculate_trade_unit(cash: int, buy_count: int = 0) -> int:
     """
     등비수열(공비 RATIO) 기반 분할매수 1회 매수금 반환.
 
+    [FIX] 계산값 < MIN_ORDER 시 0 반환 → MIN_ORDER(6,000원) 하한 고정.
+          단, 하한 고정 후 코인당 예산을 초과하면 0 반환 (매수 불가).
+          → 잔고가 적은 상황에서도 최소 매수가 가능하며,
+            예산 초과로 인한 과매수는 방지.
+
     Args:
         cash:      현재 보유 현금 (KRW) — 매 사이클 GET_CASH() 갱신값
-        buy_count: 현재 코인의 누적 매수 횟수 (0-based)
-                   main.py의 chk_15m_timer 를 그대로 전달
+        buy_count: 현재 코인의 누적 매수 횟수 (0-based, chk_15m_timer 전달)
 
     Returns:
-        이번 회차 매수금 (KRW, 1,000원 단위 반올림).
-        반올림 후 6,000원 미달 또는 MAX_BUY 초과 시 0.
+        이번 회차 매수금 (KRW, 1,000원 단위 반올림, 최소 6,000원).
+        코인당 예산 초과 또는 MAX_BUY 초과 시 0.
     """
     if cash < MIN_ORDER * NUM_COINS:
         return 0
 
     if buy_count >= MAX_BUY:
-        # 40회 도달 — main.py에서 지정가 매도로 전환하도록 0 반환
         return 0
 
     per_coin_budget = cash / NUM_COINS
     base_unit       = per_coin_budget / _SERIES_SUM_40
     this_unit       = base_unit * (RATIO ** buy_count)
 
-    # 1,000원 단위 반올림
-    # 예) 6,400 → 6,000 / 6,500 → 7,000 / 5,499 → 5,000(MIN_ORDER 미달 → 0)
+    # 1,000원 단위 반올림 후 MIN_ORDER 하한 적용
     result = round(this_unit / 1_000) * 1_000
+    result = max(result, MIN_ORDER)
 
-    # 반올림 후에도 MIN_ORDER(6,000원) 미달이면 매수 불가
-    return result if result >= MIN_ORDER else 0
+    # 하한 고정 후에도 코인당 예산 초과 시 매수 불가
+    if result > per_coin_budget:
+        return 0
+
+    return result
 
 
 def calculate_tick_unit(price: int) -> int:
@@ -94,6 +102,13 @@ if __name__ == '__main__':
     print(f"MAX_MULTIPLE = {MAX_MULTIPLE}배  (1회차 → 40회차)")
     print(f"급수합계(40항) = {_SERIES_SUM_40:.4f}\n")
 
+    print("=== 하한 고정 동작 확인 ===")
+    for cash in [50_000, 200_000, 500_000, 1_000_000]:
+        unit = calculate_trade_unit(cash, buy_count=0)
+        budget = cash / NUM_COINS
+        print(f"잔고 {cash:>9,}원 | 코인예산 {budget:>8,.0f}원 | 1회차: {unit:>7,}원")
+
+    print()
     for cash in [3_000_000, 10_000_000, 30_000_000]:
         print(f"── 잔고 {cash:>12,}원 ──")
         budget = cash // NUM_COINS
@@ -106,6 +121,6 @@ if __name__ == '__main__':
                 valid += 1
             if i + 1 in (1, 10, 20, 30, 40):
                 print(f"  {i+1:>2}회차: {unit:>9,}원")
-        print(f"  코인당예산 : {budget:>9,}원")
-        print(f"  총사용금액 : {total:>9,}원")
+        print(f"  코인당예산  : {budget:>9,}원")
+        print(f"  총사용금액  : {total:>9,}원")
         print(f"  유효매수횟수: {valid}회\n")
