@@ -4,17 +4,10 @@ main.py
 3개 코인(KRW-BTC, KRW-ETH, KRW-XRP)을 multiprocessing으로
 동시에 거래하는 메인 진입점.
 
-[FIX]
-  1. state.py 절대경로 하드코딩 제거 → __file__ 기반 상대 경로
-  2. _trigger_max_buy_limit_sell — send_telegram_msg() 대신
-     send_max_buy_alert() 사용 → 코인별 채팅방으로 전송
-  3. 지정가 매도 체결 완료(chk_sell_order 대기 루프 탈출) 시
-     sell_count 증가 + send_limit_sell_filled_alert() 호출 추가
-  4. GET_MARKET_TREND 중복 호출 제거
-     → 루프에서 계산한 trend를 _try_send_monitor에 직접 전달
-  5. GET_BUY_AVG 중복 호출 제거
-     → 매수 체결 후 산출한 new_avg를 _try_send_monitor가 재사용
-  6. sell_alert에 profit_per 전달 추가 (+6% 등 정확히 표시)
+[변경] 백테스트 최적 파라미터 적용
+  - tick_multiplier를 config.ini에서 종목별로 읽도록 변경
+    (기존: 하드코딩 * 3  →  변경: * tick_multiplier)
+  - buy_price 계산 3곳 모두 tick_multiplier 변수 사용
 """
 
 import configparser
@@ -35,8 +28,6 @@ from mod_telegram import (
     send_max_buy_alert, send_limit_sell_filled_alert,
 )
 
-# ── state.py import — __file__ 기반 상대 경로 ───────────────
-# [FIX] 절대경로 하드코딩 제거: 경로가 바뀌어도 자동 대응
 _BASE       = pathlib.Path(__file__).parent
 _state_path = _BASE / "config" / "state.py"
 _state_spec = importlib.util.spec_from_file_location("state", _state_path)
@@ -68,18 +59,12 @@ def load_config(ticker: str) -> configparser.SectionProxy:
 def _try_send_monitor(
     coin, cur_price, buy_price, sell_price,
     cur_coin, cur_cash, start_money,
-    trend,                  # [FIX] GET_MARKET_TREND 중복 호출 제거 — 호출부에서 전달
-    avg_buy_price,          # [FIX] GET_BUY_AVG 중복 호출 제거 — 호출부에서 전달
+    trend,
+    avg_buy_price,
     split_count: int = 0,
     buy_count:   int = 0,
     sell_count:  int = 0,
 ):
-    """
-    3시간 모니터링 리포트 전송.
-    메인 루프 / 매도 대기 루프 양쪽에서 호출.
-
-    [FIX] trend, avg_buy_price를 인자로 받아 내부에서 API 재호출 제거.
-    """
     try:
         _wallet = round(cur_cash + (cur_coin * cur_price))
         _profit = _wallet - start_money
@@ -107,26 +92,15 @@ def _try_send_monitor(
 
 
 # ════════════════════════════════════════════════════════════════
-#  40회 도달 → 지정가 매도 전환 헬퍼
+#  MAX_BUY 도달 → 지정가 매도 전환 헬퍼
 # ════════════════════════════════════════════════════════════════
 
 def _trigger_max_buy_limit_sell(coin: str, profit_per: float) -> int:
-    """
-    분할매수 MAX_BUY(40회) 도달 시 지정가 매도 주문 + 텔레그램 알림.
-
-    [FIX] send_telegram_msg() → send_max_buy_alert()
-          → 코인별 채팅방으로 전송 (기존: MONITOR로 잘못 전송되던 버그)
-
-    Returns:
-        1 — 성공
-        0 — 실패
-    """
     try:
         avg   = GET_BUY_AVG(coin)
         limit = round(avg * profit_per)
         res   = ORDER_SELL_LIMIT(coin, profit_per)
 
-        # [FIX] 코인별 채팅방으로 전송
         send_max_buy_alert(
             ticker=coin,
             avg=round(avg),
@@ -153,8 +127,7 @@ def run(coin: str) -> None:
     # ── ① 로거 초기화 ────────────────────────────────────────
     setup_logger(coin)
 
-    # ── RSS 백그라운드 모니터 시작 ──────────────────────────
-    # 점검 공지를 5분 간격으로 폴링 → 감지 시 텔레그램 사전 경보
+    # ── RSS 백그라운드 모니터 ────────────────────────────────
     _health_monitor = UpbitHealthMonitor(coin)
     _health_monitor.start()
 
@@ -167,10 +140,12 @@ def run(coin: str) -> None:
     days_short       = cfg.getint  ("days_short",       3)
     days_long        = cfg.getint  ("days_long",        20)
     min_sell_amount  = cfg.getint  ("min_sell_amount",  6_000)
+    tick_multiplier  = cfg.getint  ("tick_multiplier",  3)      # ★ 추가
 
     log("INFO", f"[{coin}] 설정 로드 완료",
         f"days_short={days_short}", f"days_long={days_long}",
-        f"profitPer={profitPer}", f"MAX_BUY={MAX_BUY}")
+        f"profitPer={profitPer}", f"sell_profit_rate={sell_profit_rate}",
+        f"tick_multiplier={tick_multiplier}", f"MAX_BUY={MAX_BUY}")
 
     # ── ③ 초기 시장 데이터 조회 ──────────────────────────────
     cur_cash  = GET_CASH(coin)
@@ -212,7 +187,8 @@ def run(coin: str) -> None:
             f"buy_price={buy_price}", f"sell_price={sell_price}",
             f"split={chk_15m_timer} buy={buy_count} sell={sell_count}")
     else:
-        buy_price = cur_price - (one_tick * 3)
+        # ★ 하드코딩 * 3  →  * tick_multiplier
+        buy_price = cur_price - (one_tick * tick_multiplier)
         sell_price = (
             round(GET_BUY_AVG(coin) * sell_profit_rate)
             if cur_coin * cur_price >= min_sell_amount
@@ -223,8 +199,6 @@ def run(coin: str) -> None:
     chk_run        = 1
     timer_3h_start = time.time()
 
-    # avg_buy_price — [FIX] GET_BUY_AVG 중복 호출 방지용 캐시
-    # 초기값을 조회해두고, 매수/매도 체결 후 갱신
     cached_avg = round(GET_BUY_AVG(coin)) if cur_coin * cur_price >= min_sell_amount else 0
 
     time.sleep(1)
@@ -232,8 +206,6 @@ def run(coin: str) -> None:
     while chk_run == 1:
 
         # ── 업비트 헬스체크 ─────────────────────────────────
-        # API 무응답 시 wait_until_alive()가 복구까지 블로킹.
-        # 프로세스는 살아있고 거래 루프만 일시정지됨.
         if not is_upbit_alive():
             wait_until_alive(coin)
             continue
@@ -263,7 +235,6 @@ def run(coin: str) -> None:
         if cur_cash < min_cash:
             log("DG", f"[{coin}] 현금 부족")
 
-        # ── [FIX] trend를 1회만 계산해 루프·리포트 양쪽에서 재사용 ─
         trend = GET_MARKET_TREND(coin, cur_price, days_short, days_long)
 
         # ── 3시간 모니터링 리포트 ────────────────────────────
@@ -272,14 +243,14 @@ def run(coin: str) -> None:
                 coin, cur_price, buy_price, sell_price,
                 cur_coin, cur_cash, start_money,
                 trend=trend,
-                avg_buy_price=cached_avg,   # [FIX] API 재호출 없이 캐시값 사용
+                avg_buy_price=cached_avg,
                 split_count=chk_15m_timer,
                 buy_count=buy_count,
                 sell_count=sell_count,
             )
             timer_3h_start = time.time()
 
-        # ── 40회 도달 → 지정가 매도 전환 ────────────────────
+        # ── MAX_BUY 도달 → 지정가 매도 전환 ─────────────────
         if (chk_15m_timer >= MAX_BUY
                 and cur_coin * cur_price > min_sell_amount
                 and chk_sell_order == 0):
@@ -305,7 +276,8 @@ def run(coin: str) -> None:
                     f"COIN:{cur_coin} SPLIT:{chk_15m_timer}/{MAX_BUY} TREND:{trend}")
 
                 if trend in ("up", "run-up"):
-                    buy_price = cur_price - (one_tick * 3)
+                    # ★ 하드코딩 * 3  →  * tick_multiplier
+                    buy_price = cur_price - (one_tick * tick_multiplier)
                     log("INFO", f"[{coin}] Trend={trend} → buy_price={buy_price}")
 
                 log("DG", f"[{coin}] CUR:{cur_price} BUY:{buy_price}")
@@ -328,14 +300,12 @@ def run(coin: str) -> None:
                             order_uuid   = res.get("uuid", "")
                             order_detail = GET_ORDER_DETAIL(order_uuid) if order_uuid else None
 
-                            # ── 체결 정보 추출 (정상 / 잔고기반 공통 처리) ──
                             if order_detail is None:
                                 coin_qty_after = GET_QUAN_COIN(coin)
                                 if coin_qty_after * cur_price < min_sell_amount:
                                     log("INFO", f"[{coin}] 매수 미체결 확정")
                                     order_detail = None
                                 else:
-                                    # 잔고 기반 2차 확인
                                     buy_amount_f = coin_qty_after
                                     fee          = round(buy_amount * 0.0005, 8)
                                     buy_total    = buy_amount
@@ -362,9 +332,10 @@ def run(coin: str) -> None:
                                 )
 
                                 new_avg      = GET_BUY_AVG(coin)
-                                cached_avg   = round(new_avg)   # [FIX] 캐시 갱신
+                                cached_avg   = round(new_avg)
                                 sell_price   = round(new_avg * sell_profit_rate)
-                                buy_price    = cur_price - (one_tick * 3)
+                                # ★ 하드코딩 * 3  →  * tick_multiplier
+                                buy_price    = cur_price - (one_tick * tick_multiplier)
                                 wallet_after = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
 
                                 log("INFO", f"[{coin}] BUY FILLED ({chk_15m_timer}/{MAX_BUY}회)",
@@ -419,7 +390,7 @@ def run(coin: str) -> None:
                             sell_total  = 0
 
                         avg_buy      = GET_BUY_AVG(coin)
-                        cached_avg   = round(avg_buy)   # [FIX] 매도 후 캐시 갱신
+                        cached_avg   = round(avg_buy)
                         wallet_after = round(GET_CASH(coin) + (GET_QUAN_COIN(coin) * cur_price))
                         profit       = round(sell_total - (avg_buy * sell_amount) - fee)
                         profit_rate  = round(
@@ -463,7 +434,6 @@ def run(coin: str) -> None:
                 log("DG", f"[{coin}] 거래 루프 예외", e)
 
         else:
-            # ── 현금 부족 → 지정가 매도 주문 확인 ───────────
             try:
                 order_info = GET_ORDER_INFO(coin)
 
@@ -493,7 +463,6 @@ def run(coin: str) -> None:
             try:
                 cur_price_w = GET_CUR_PRICE(coin)
 
-                # 대기 중 3시간 리포트 체크
                 if cur_price_w and time.time() - timer_3h_start >= 10_800:
                     trend_w = GET_MARKET_TREND(coin, cur_price_w, days_short, days_long)
                     _try_send_monitor(
@@ -510,17 +479,12 @@ def run(coin: str) -> None:
                 tmp = GET_ORDER_INFO(coin)
 
                 if tmp == 2:
-                    # ── [FIX] 지정가 매도 체결 완료 처리 ────────
-                    # 기존: 카운터 초기화만 하고 알림·sell_count 누락
-                    # 수정: sell_count 증가 + send_limit_sell_filled_alert 호출
                     cur_cash_w   = GET_CASH(coin)
                     cur_coin_w   = GET_QUAN_COIN(coin)
                     wallet_after = round(cur_cash_w + (cur_coin_w * (cur_price_w or cur_price)))
                     avg_buy      = GET_BUY_AVG(coin)
-                    # 지정가 매도는 총액·수량을 정확히 알기 어려우므로
-                    # 지갑 증분으로 근사
-                    sell_total_approx = max(wallet_after - wallet, 0)
-                    profit_approx     = round(sell_total_approx * (profitPer - 1) / profitPer)
+                    sell_total_approx  = max(wallet_after - wallet, 0)
+                    profit_approx      = round(sell_total_approx * (profitPer - 1) / profitPer)
                     profit_rate_approx = round((profitPer - 1) * 100, 2)
 
                     send_limit_sell_filled_alert(
